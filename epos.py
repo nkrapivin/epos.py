@@ -8,7 +8,9 @@ import requests
 class EposClient:
     __cabinetUrl__ = 'https://cabinet.permkrai.ru/'
     __eposUrl__ = 'https://school.permkrai.ru/'
-    __session__ = requests.Session()
+
+    def __init__(self):
+        self.__session__ = requests.Session()
 
     def __setheaders__(self):
         # pycharm's weird o_O?

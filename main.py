@@ -5,6 +5,7 @@ import epos
 def testcase_main():
     print('pre-testcase...')
     e = epos.EposClient()
+    e2 = epos.EposClient()
 
     # achtung paroli!!!
     login = input("Login (E-Mail): ")
