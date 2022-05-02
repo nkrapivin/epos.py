@@ -1,176 +1,200 @@
 # epos.py by nkrapivindev :3
 # licensed under public domain, meaning I don't care at all.
 
-# :(
 import requests
+from urllib.parse import urljoin, urlencode
+
+from lxml import etree
+
+from utils import bool_to_lower
+
+
+_HEADERS = {
+    "User-Agent": 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.10 '
+                  'Safari/537.36 ',
+
+    "Sec-CH-UA": '" Not A;Brand";v="99", "Chromium";v="98", "Google Chrome";v="98"',
+    "Sec-CH-UA-Mobile": '?0',
+    "Sec-CH-UA-Platform": '"Windows"',
+    "Pragma": 'no-cache',
+    "Cache-Control": 'no-cache',
+    "Accept": 'application/json, text/plain, text/html, */*',
+    "Accept-Language": 'en-US,en;q=0.9',
+    "Upgrade-Insecure-Requests": '1',
+    "X-Requested-With": 'XMLHttpRequest'
+}
+_EPOS_URL = "'https://school.permkrai.ru"
+_CABINET_URL = "https://cabinet.permkrai.ru"
 
 
 class EposClient:
-    __cabinetUrl__ = 'https://cabinet.permkrai.ru/'
-    __eposUrl__ = 'https://school.permkrai.ru/'
-
     def __init__(self):
-        self.__session__ = requests.Session()
+        self._session: requests.Session = requests.Session()
+        self._session.headers.update(_HEADERS)
 
-    def __setheaders__(self):
-        # pycharm's weird o_O?
-        self.__session__.headers['user-agent'] = 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, ' \
-                                                 'like Gecko) Chrome/98.0.4758.10 Safari/537.36 '
-        # imitate a Chrome browser as much as possible
-        self.__session__.headers['sec-ch-ua'] = '" Not A;Brand";v="99", "Chromium";v="98", "Google Chrome";v="98"'
-        self.__session__.headers['sec-ch-ua-mobile'] = '?0'
-        self.__session__.headers['sec-ch-ua-platform'] = '"Windows"'
-        self.__session__.headers['pragma'] = 'no-cache'
-        self.__session__.headers['accept-language'] = 'en-US,en;q=0.9'
-        self.__session__.headers['cache-control'] = 'no-cache'
-        self.__session__.headers['accept'] = 'application/json, text/plain, text/html, */*'
-        self.__session__.headers['upgrade-insecure-requests'] = '1'
-        self.__session__.headers['x-requested-with'] = 'XMLHttpRequest'
-
-    def __refreshcsrf__(self):
-        self.__setheaders__()
-
-        r = self.__session__.get(
-            url=self.__cabinetUrl__ + 'login'
+    def _refresh_csrf(self):
+        r = self._session.get(
+            url=urljoin(_CABINET_URL, 'login')
         )
 
-        html = r.text
-        # grab the csrf token from the html layout (very awful but works)
-        startpos = html.find('"csrf-token" content="') + len('"csrf-token" content="')
-        endpos = html.find('" id="csrf"')
-        csrftoken = html[startpos:endpos]
+        html = etree.fromstring(r.text, etree.XMLParser(recover=True))
+        csrf_meta = html.find('.//meta[@name="csrf-token"]')
+        csrf_token = csrf_meta.get('content')
 
-        self.__session__.headers['x-csrf-token'] = csrftoken
-        self.__session__.headers['x-xsrf-token'] = self.__session__.cookies['XSRF-TOKEN']
+        self._session.headers['X-CSRF-Token'] = csrf_token
+        self._session.headers['X-XSRF-Token'] = self._session.cookies['XSRF-TOKEN']
 
-    def login_password(self, rsaag_login: str, rsaag_password: str):
-        self.__refreshcsrf__()
+    def login(self, rsaag_login: str, rsaag_password: str):
+        self._refresh_csrf()
 
-        r = self.__session__.post(
-            url=self.__cabinetUrl__ + 'login',
+        r = self._session.post(
+            url=urljoin(_CABINET_URL, 'login'),
             data={
-                '_token': self.__session__.headers['x-csrf-token'],
+                '_token': self._session.headers['X-CSRF-Token'],
                 'login': rsaag_login,
                 'password': rsaag_password
             }
         )
 
-        return r.status_code < 400
+        r.raise_for_status()
 
-    # def login_gosuslugi O_O
+    def cabinet_logout(self):
+        self._refresh_csrf()
 
-    def logout(self):
-        self.__refreshcsrf__()
-
-        r = self.__session__.get(
-            url=self.__cabinetUrl__ + 'logout'
+        r = self._session.get(
+            url=urljoin(_CABINET_URL, 'logout')
         )
 
-        return r.status_code < 400
+        r.raise_for_status()
 
     def check_agreement(self):
-        self.__refreshcsrf__()
+        self._refresh_csrf()
 
-        r = self.__session__.post(
-            url=self.__cabinetUrl__ + 'check_agreement'
+        r = self._session.post(
+            url=urljoin(_CABINET_URL, 'check_agreement')
         )
 
         return r.json()
 
-    def auth_epos(self, auth_app: str):
-        self.__refreshcsrf__()
+    def _auth(self, auth_app: str) -> str:
+        self._refresh_csrf()
 
-        r = self.__session__.get(
-            url=self.__eposUrl__ + 'authenticate?mode=oauth&app=' + auth_app
+        params = {
+            'mode': 'oauth',
+            'app': auth_app
+        }
+        r = self._session.get(
+            url=urljoin(_EPOS_URL, f'authenticate?{urlencode(params)}')
         )
+        r.raise_for_status()
 
         # ..... ?????????? ???????????
-        self.__session__.headers['auth-token'] = self.__session__.cookies['auth_token']
-        self.__session__.headers['profile-id'] = self.__session__.cookies['profile_id']
+        self._session.headers['auth-token'] = self._session.cookies['auth_token']
+        self._session.headers['profile-id'] = self._session.cookies['profile_id']
 
         # the IB Whiteboard client seems to save this auth-token value into some storage, might be useful?
-        return [r.status_code < 400, self.__session__.headers['auth-token']]
+        return self._session.headers['auth-token']
 
-    def auth_epos_student(self):
-        return self.auth_epos('rsaags')
+    def auth_student(self):
+        return self._auth(auth_app='rsaags')
 
-    def auth_epos_parent(self):
-        return self.auth_epos('rsaag')
+    def auth_parent(self):
+        return self._auth(auth_app='rsaag')
 
-    def auth_epos_teacher(self):
-        return self.auth_epos('rsaa')
+    def auth_teacher(self):
+        return self._auth(auth_app='rsaa')
 
-    def epos_logout(self):
-        r = self.__session__.delete(
-            url=self.__eposUrl__
-            + 'lms/api/sessions?authentication_token=' + str(self.__session__.headers['auth-token']),
+    def logout(self):
+        params = {
+            'authentication_token': self._session.headers['auth-token']
+        }
+
+        r = self._session.delete(
+            url=urljoin(_EPOS_URL, f'lms/api/sessions?{urlencode(params)}'),
             json=[]
         )
 
-        return r.status_code < 400
+        r.raise_for_status()
 
-    def epos_get_sessions(self):
-        r = self.__session__.post(
-            url=self.__eposUrl__
-            + 'lms/api/sessions?pid=' + self.__session__.headers['profile-id'],
+    def get_sessions(self):
+        r = self._session.post(
+            url=urljoin(_EPOS_URL, f"lms/api/sessions?pid={self._session.headers['profile-id']}"),
             json={
-                'auth_token': self.__session__.headers['auth-token']
+                'auth_token': self._session.headers['auth-token']
             }
         )
 
         return r.json()
 
-    def epos_get_academic_years(self, profile_id: int):
-        r = self.__session__.get(
-            url=self.__eposUrl__ + 'core/api/academic_years?pid=' + str(profile_id)
+    def get_academic_years(self, profile_id: int):
+        r = self._session.get(
+            url=urljoin(_EPOS_URL, f"core/api/academic_years?pid={profile_id}")
         )
 
         return r.json()
 
-    def epos_get_system_messages(self, profile_id: int, published: bool, today: bool):
-        r = self.__session__.get(
-            url=self.__eposUrl__
-            + 'acl/api/system_messages?pid=' + str(profile_id)
-            + '&published=' + str(published).lower()
-            + '&today=' + str(today).lower()
+    def get_system_messages(self, profile_id: int, published: bool, today: bool):
+        params = {
+            'pid': profile_id,
+            'published': bool_to_lower(published),
+            'today': bool_to_lower(today)
+        }
+
+        r = self._session.get(
+            url=urljoin(_EPOS_URL, f"acl/api/system_messages?{urlencode(params)}")
         )
 
         return r.json()
 
-    def epos_get_users(self, user_ids: list[int], profile_id: int):
-        r = self.__session__.get(
-            url=self.__eposUrl__
-            + 'acl/api/users?ids=' + ','.join([str(el) for el in user_ids])
-            + '&pid=' + str(profile_id)
+    def get_users(self, user_ids: list[int], profile_id: int):
+        params = {
+            'ids': ','.join(str(_id) for _id in user_ids),
+            'pid': profile_id
+        }
+
+        r = self._session.get(
+            url=urljoin(_EPOS_URL, f"acl/api/users?{urlencode(params)}")
         )
 
         return r.json()
 
-    def epos_get_student_profiles(self, profile_id: int, academic_year_id: int = -1):
-        r = self.__session__.get(
-            url=self.__eposUrl__
-            + 'core/api/student_profiles/' + str(profile_id) + '?pid=' + str(profile_id)
-            + '&academic_year_id=' + str(academic_year_id) if academic_year_id >= 0 else ''
+    def get_student_profiles(self, profile_id: int, academic_year_id: int = -1):
+        params = {
+            "pid": profile_id,
+            "academic_year_id": academic_year_id if academic_year_id >= 0 else ''
+        }
+
+        r = self._session.get(
+            url=urljoin(_EPOS_URL, f'core/api/student_profiles/{profile_id}?{urlencode(params)}')
         )
 
         return r.json()
 
-    def epos_get_progress(self, profile_id: int, academic_year_id: int, hide_half_years: bool):
-        r = self.__session__.get(
-            url=self.__eposUrl__
-            + 'reports/api/progress/json?academic_year_id=' + str(academic_year_id)
-            + '&hide_half_years=' + str(hide_half_years).lower()
-            + '&pid=' + str(profile_id)
-            + '&student_profile_id=' + str(profile_id)
+    def get_progress(self, profile_id: int, academic_year_id: int, hide_half_years: bool):
+        params = {
+            "academic_year_id": academic_year_id,
+            "hide_half_years": bool_to_lower(hide_half_years),
+            "pid": profile_id,
+            "student_profile_id": profile_id
+        }
+
+        r = self._session.get(
+            url=urljoin(_EPOS_URL, f'reports/api/progress/json?{urlencode(params)}' + str(academic_year_id))
         )
 
         return r.json()
 
-    def epos_get_notifications(self, profile_id: int):
-        r = self.__session__.get(
-            url=self.__eposUrl__
-            + 'notification/api/notifications/status?pid=' + str(profile_id)
-            + '&student_id=' + str(profile_id)
+    def get_notifications(self, profile_id: int):
+        params = {
+            'pid': profile_id,
+            'student_id': profile_id
+        }
+
+        r = self._session.get(
+            url=urljoin(_EPOS_URL, f'notification/api/notifications/status?{urlencode(params)}')
         )
 
         return r.json()
+
+
+__all__ = ["EposClient"]
